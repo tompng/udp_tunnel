@@ -1,8 +1,12 @@
 require 'socket'
 require_relative 'connection'
 require_relative 'usocket'
+require_relative 'stun'
 socket = UDPSocket.open
 socket.bind '0.0.0.0', 0
+# stun = Stun.new socket
+# global_ip, global_port = stun.get_ip_port
+# p [global_ip, global_port]
 
 local_port = socket.addr[1]
 p local_port
