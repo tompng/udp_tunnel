@@ -13,16 +13,11 @@ class ConnectionManager
   def run_recv
     loop do
       data, addr = @socket.recvfrom 65536
-      if rand > 0.9
-        p [:loss, data]
-        next
-      end
       ip = addr[3]
       port = addr[1]
       key = [ip, port]
       type_id = data.ord
       msg = data[1..]
-      p [:recv, Connection::TYPES[type_id], msg]
       case Connection::TYPES[type_id]
       when :req
         find_or_accept_connection(ip, port)&.send_ack
@@ -53,8 +48,15 @@ class ConnectionManager
   end
 
   def send_raw(data, ip, port)
-    p [:raw, data]
-    @socket.send data, 0, ip, port
+    if rand < $PACKET_LOSS
+      p :lost
+      return
+    end
+    p [:send, data.size]
+    Thread.new{
+      sleep rand(0.1)
+      @socket.send data, 0, ip, port
+    }
   end
 
   def accept
@@ -73,7 +75,7 @@ class ConnectionManager
   def run_tick
     loop do
       @connections.each_value { _1.tick }
-      sleep 1
+      sleep 0.1
     end
   end
 
@@ -198,8 +200,10 @@ class Connection
   end
 
   def handle_data(recv_id, idx, data)
-    reset_recv_connection recv_id if recv_id != @recv_connection_id
-    @recv_buffer[idx - @recv_idx] = data
+    p [:recv, data.size, @recv_buffer.size, @recv_idx]
+
+    reset_recv_connection recv_id if recv_id != @recv_connection_id && recv_id != @terminated_recv_connection_id
+    @recv_buffer[idx - @recv_idx] = data if idx >= @recv_idx
     @unreceiveds.delete idx
     while @recv_buffer.first
       @recv_idx += 1
@@ -223,18 +227,20 @@ class Connection
       @unreceiveds[id] ||= current
     end
     timeout = 0.2
-    missing_ids = @unreceiveds.keys.select do |id|
-      current - @unreceiveds[id] > timeout
+    max_resend_req = (MAX_BODY_SIZE - 5) / 4
+    missing_ids = []
+    @unreceiveds.each_key do |id|
+      if current - @unreceiveds[id] > timeout
+        missing_ids << id
+        break if missing_ids.size >= max_resend_req
+      end
     end
     return if missing_ids.empty?
     missing_ids.each { @unreceiveds[_1] = current + timeout }
-    missing_ids.each_slice((MAX_BODY_SIZE - 5) / 4) do |ids|
-      socket_send :resend, @recv_connection_id, ids
-    end
+    socket_send :resend, @recv_connection_id, missing_ids
   end
 
   def socket_send(type, *data)
-    p [:socket_send, type, data]
     sdata = data.flatten.map { _1.is_a?(Numeric) ? [_1].pack('N') : _1 }.join
     type_id = TYPES.index type
     @manager.send_raw type_id.chr + sdata, @ip, @port

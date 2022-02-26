@@ -17,7 +17,6 @@ class USocket
 
   def handle_close
     return if closed?
-    puts "\e[33mCLOSE_BY_REMOTE\e[m"
     @closed = true
     @read_queue << nil
   end
@@ -28,23 +27,17 @@ class USocket
 
   def close
     return if closed?
-    puts "\e[33mSEND CLOSE\e[m"
     @closed = true
     send_ctrl 'X'
     @client.remove @id
   end
 
   def send_ctrl(type, data = '')
-    p [type, @id, [data.size].pack('N'), data]
     @connection.send_data type + @id + [data.size].pack('N') + data rescue exit
   end
 
   def write(data)
-    if closed?
-      p :CLOSEDCLOSEDCLOSEDCLOSEDCLOSED
-    end
     return if closed?
-    puts "\e[31m#{[:SEND, data].inspect}\e[m"
     send_ctrl 'D', data unless data.nil? || data.empty?
   end
 
@@ -81,7 +74,6 @@ class Client
   end
 
   def handle_data(id, type, data)
-    puts "\e[1m#{[id, type, data].inspect}\e[m"
     case type
     when 'O'
       return if @sockets[id] || @accept_queue.nil?
