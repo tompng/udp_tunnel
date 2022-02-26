@@ -1,3 +1,5 @@
+require 'monitor'
+
 class ConnectionManager
   def initialize(socket, accept: true)
     @socket = socket
@@ -48,11 +50,10 @@ class ConnectionManager
   end
 
   def send_raw(data, ip, port)
-    if rand < $PACKET_LOSS
+    if rand < 0.05
       p :lost
       return
     end
-    p [:send, data.size]
     Thread.new{
       sleep rand(0.1)
       @socket.send data, 0, ip, port
@@ -96,7 +97,10 @@ class Connection
     @status = :connecting
     @initialized_at = @last_recv_ack = Time.now
     @last_send_ack = nil
+    @last_send_ack_idx = 0
     @terminated_recv_connection_id = nil
+    @monitor = Monitor.new
+    @cond = @monitor.new_cond
     reset_send_connection
     reset_recv_connection 0
   end
@@ -136,8 +140,12 @@ class Connection
   end
 
   MAX_BODY_SIZE = 1024
+  MAX_PACKET_BUFFER = 64
 
   def send_data(message)
+    @monitor.synchronize do
+      @cond.wait_while { @send_buffer.size >= MAX_PACKET_BUFFER }
+    end
     message.chars.each_slice(MAX_BODY_SIZE - 9).map(&:join).map do |msg|
       idx = @send_idx + @send_buffer.size
       @send_buffer << msg
@@ -175,6 +183,7 @@ class Connection
 
   def send_ack
     @last_send_ack = Time.now
+    @last_send_ack_idx = @recv_idx
     socket_send :ack, @recv_connection_id, @recv_idx, @send_connection_id, @send_idx + @send_buffer.size
   end
 
@@ -188,20 +197,21 @@ class Connection
     reset_recv_connection recv_id if recv_id != @recv_connection_id
     if reached_idx >= @send_idx
       @send_buffer.shift reached_idx - @send_idx
-    else
+      @send_idx = reached_idx
+    elsif reached_idx == 0
       reset_send_connection
       trigger :reset
     end
-    @send_idx = reached_idx
     i = remote_sent_count - 1 - @recv_idx
     @recv_buffer[i] ||= nil if i >= 0
     @last_recv_ack = Time.now
     request_resend
+    @monitor.synchronize do
+      @cond.signal if @send_buffer.size < MAX_PACKET_BUFFER
+    end
   end
 
   def handle_data(recv_id, idx, data)
-    p [:recv, data.size, @recv_buffer.size, @recv_idx]
-
     reset_recv_connection recv_id if recv_id != @recv_connection_id && recv_id != @terminated_recv_connection_id
     @recv_buffer[idx - @recv_idx] = data if idx >= @recv_idx
     @unreceiveds.delete idx
@@ -209,12 +219,14 @@ class Connection
       @recv_idx += 1
       trigger :data, @recv_buffer.shift
     end
+    send_ack if @recv_idx > @last_send_ack_idx + 16
     request_resend
   end
 
   def handle_resend(send_id, idxs)
     return if send_id != @send_connection_id
     idxs.each do |idx|
+      next if idx < @send_idx
       msg = @send_buffer[idx - @send_idx]
       socket_send :data, @send_connection_id, idx, msg
     end
