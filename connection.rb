@@ -13,6 +13,10 @@ class ConnectionManager
   def run_recv
     loop do
       data, addr = @socket.recvfrom 65536
+      if rand > 0.9
+        p [:loss, data]
+        next
+      end
       ip = addr[3]
       port = addr[1]
       key = [ip, port]
@@ -129,8 +133,10 @@ class Connection
     @event_queue.deq
   end
 
+  MAX_BODY_SIZE = 1024
+
   def send_data(message)
-    message.chars.each_slice(1024).map(&:join).map do |msg|
+    message.chars.each_slice(MAX_BODY_SIZE - 9).map(&:join).map do |msg|
       idx = @send_idx + @send_buffer.size
       @send_buffer << msg
       socket_send :data, @send_connection_id, idx, msg
@@ -161,6 +167,7 @@ class Connection
       end
     elsif connected?
       send_ack if @last_send_ack.nil? || current - @last_send_ack > 5
+      request_resend
     end
   end
 
@@ -215,13 +222,15 @@ class Connection
       next if msg
       @unreceiveds[id] ||= current
     end
-    timeout = 200
-    ids = @unreceiveds.keys.select do |id|
+    timeout = 0.2
+    missing_ids = @unreceiveds.keys.select do |id|
       current - @unreceiveds[id] > timeout
     end
-    return if ids.empty?
-    ids.each { @unreceiveds[_1] = current + timeout }
-    socket_send :resend, @recv_connection_id, ids
+    return if missing_ids.empty?
+    missing_ids.each { @unreceiveds[_1] = current + timeout }
+    missing_ids.each_slice((MAX_BODY_SIZE - 5) / 4) do |ids|
+      socket_send :resend, @recv_connection_id, ids
+    end
   end
 
   def socket_send(type, *data)
