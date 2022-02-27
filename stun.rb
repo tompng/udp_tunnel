@@ -2,11 +2,7 @@ require 'securerandom'
 require 'socket'
 require 'timeout'
 
-class Stun
-  def initialize(socket)
-    @socket = socket
-  end
-
+module Stun
   ADDRS = [
     ['stun.l.google.com', 19302],
     ['stun1.l.google.com', 19302],
@@ -17,33 +13,25 @@ class Stun
 
   class Error < StandardError; end
 
-  def self.get_ip_port(socket)
-    Stun.new(socket).get_ip_port
+  MAGIC_COOKIE = 0x2112A442
+
+  def self.request
+    magic = [MAGIC_COOKIE].pack('N') + SecureRandom.random_bytes(12)
+    [1, 0].pack('nn') + magic
   end
 
-  def get_ip_port
-    servers = ADDRS.sample 2
-    results = servers.map do |host, port|
-      test host, port
+  def self.response?(response, request: nil)
+    return false unless response.unpack('CC') == [1, 1]
+    if request
+      response[4, 16] == request[4...20]
+    else
+      response[4, 4].unpack1('N') == MAGIC_COOKIE
     end
-    if results.uniq.size != 1
-      p servers.zip(results)
-      raise Error, 'Unsupported Symmetric NAT'
-    end
-    results[0]
   end
 
-  def test(host, port)
-    magic_cookie = 0x2112A442
-    magic_cookie_transaction_id = [magic_cookie].pack('N') + SecureRandom.random_bytes(12)
-    @socket.send [1, 0].pack('nn') + magic_cookie_transaction_id, 0, host, port
-    data = Timeout.timeout 5 do
-      loop do
-        response, _addr = @socket.recvfrom 1024
-        break response if magic_cookie_transaction_id == response[4...20]
-      end
-    end
-    attr_chars = data[20..].chars
+  def self.parse_response(response)
+    magic_cookie_transaction_id = response[4...20]
+    attr_chars = response[20..].chars
     attrs = {}
     until attr_chars.empty?
       type, size = attr_chars.shift(4).join.unpack('nn')
@@ -52,7 +40,7 @@ class Stun
     end
     # 1: MAPPED-ADDRESS, 2: XOR-MAPPED-ADDRESS
     value = attrs[1] || attrs[32]
-    raise Error, 'Packet Parse Error' unless value
+    raise Error, "Packet Parse Error #{response}" unless value
     xor = attrs[1] ? [0] : magic_cookie_transaction_id.unpack('N*')
     family, xport, *xip = value.unpack 'nnN*'
     port = xport ^ (xor[0] >> 16)
@@ -63,9 +51,7 @@ class Stun
     when 2 # IPv6
       [ip.join(':'), port]
     else
-      raise Error, 'Packet Parse Error'
+      raise Error, "Packet Parse Error #{response}"
     end
-  rescue Timeout::Error
-    raise Error, 'Timeout'
   end
 end

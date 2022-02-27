@@ -13,7 +13,11 @@ opt.on('-b', '--bind IP', 'bind ip. `0.0.0.0` or `::`') { bind_addr = _1 }
 opt.on('-ipv4') { bind_addr = '0.0.0.0' }
 opt.on('-ipv6') { bind_addr = '::' }
 opt.on('-s', '--server ADDR', 'Accepts udp connection and proxy to server. ex: `127.0.0.1:3000`') { server_addr = _1 }
-opt.parse ARGV
+rest = opt.parse ARGV
+unless rest.empty?
+  puts "Wrong ARGV: #{rest}"
+  exit
+end
 socket = UDPSocket.open bind_addr.include?(':') ? Socket::AF_INET6 : Socket::AF_INET
 socket.bind bind_addr, 0
 
@@ -58,6 +62,33 @@ class Runner
       pipe_socket socket, tcp_socket
       pipe_socket tcp_socket, socket, -> { p [:closed, id, info] }
     end
+  end
+
+  def get_ip_port
+    n = 2
+    addrs = Stun::ADDRS.sample n
+    requests = n.times.map { Stun.request }
+    responses = []
+    @manager.on_unhandled_data = lambda do |data, _addr|
+      req = requests.find { Stun.response? data, request: _1 }
+      next unless req
+      requests -= [req]
+      responses << data
+    end
+    addrs.zip requests do |(host, port), req|
+      @manager.socket.send req, 0, host, port
+    end
+    timeout = 5
+    (timeout * 10).times do
+      break if responses.size == n
+      sleep 0.1
+    end
+    results = responses.map { Stun.parse_response _1 }
+    raise Stun::Error, "Timeout #{results}" if results.size != n
+    raise Stun::Error, "Symmetric NAT not supported #{results}" if results.uniq.size != 1
+    results.first
+  ensure
+    @manager.on_unhandled_data = nil
   end
 
   def run_client(tcp_server, ip, port)
@@ -119,7 +150,7 @@ begin
         MESSAGE
       end
     when /^show/
-      p Stun.get_ip_port socket
+      p runner.get_ip_port
     when /^exit/
       break
     else

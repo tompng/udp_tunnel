@@ -1,7 +1,7 @@
 require 'monitor'
 
 class ConnectionManager
-  attr_accessor :on_connect, :on_close
+  attr_accessor :on_connect, :on_close, :on_unhandled_data, :socket
   def initialize(socket, accept: true)
     @socket = socket
     @connections = {}
@@ -16,7 +16,10 @@ class ConnectionManager
   def run_recv
     loop do
       data, addr = @socket.recvfrom 65536
-      next if data[0, 3] != Connection::SIGNATURE
+      unless data[0, 3] == Connection::SIGNATURE
+        on_unhandled_data&.call data, addr
+        next
+      end
       ip = addr[3]
       port = addr[1]
       key = [ip, port]
