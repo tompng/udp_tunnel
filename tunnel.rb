@@ -22,7 +22,6 @@ socket = UDPSocket.open bind_addr.include?(':') ? Socket::AF_INET6 : Socket::AF_
 socket.bind bind_addr, 0
 
 local_udp_port = socket.addr[1]
-puts "local udp port: #{local_udp_port}"
 class Runner
   def initialize(socket)
     @manager = ConnectionManager.new socket
@@ -107,6 +106,10 @@ class Runner
   def accept(ip, port)
     @manager.connect ip, port, mark_for_accept: true
   end
+
+  def connect(ip, port)
+    @manager.connect ip, port
+  end
 end
 
 runner = Runner.new socket
@@ -118,15 +121,14 @@ if server_addr
 end
 
 Reline.autocompletion = true
-commands = %w[connect show]
-commands << 'accept' if server_addr
+commands = %w[connect accept show]
 Reline.completion_proc = lambda do |target, pre = nil|
   commands.map { _1 + ' ' }.select { _1.start_with? target } if target == pre
 end
 
 begin
   loop do
-    text = Reline.readline('> ', true)
+    text = Reline.readline '> ', true
     case text
     when /^connect/
       if /^connect +(?<local_port>\d+) +-> +(?<remote_ip>\S+) +(?<remote_port>\d+)/ =~ text
@@ -139,10 +141,12 @@ begin
         MESSAGE
       end
     when /^accept/
-      if !server_addr
-        puts 'cannot use if --server is not provided'
-      elsif /^accept +(?<remote_ip>\S+) +(?<remote_port>\d+)/ =~ text
-        runner.accept remote_ip, remote_port.to_i
+      if /^accept +(?<remote_ip>\S+) +(?<remote_port>\d+)/ =~ text
+        if server_addr
+          runner.accept remote_ip, remote_port.to_i
+        else
+          runner.connect remote_ip, remote_port.to_i
+        end
       else
         puts <<~MESSAGE
           Invalid format. `accept [remote_ip] [remote_port]`
@@ -150,17 +154,21 @@ begin
         MESSAGE
       end
     when /^show/
+      p local_udp_port: local_udp_port
       p runner.get_ip_port
-    when /^exit/
+    when /^exit!/
       break
+    when /^irb/
+      binding.irb
     else
       unless text.strip.empty?
         puts <<~MESSAGE
           command not found: #{text}
-          > connect [local_port] -> [remote_ip] [remote_port]
-          > accept [remote_ip] [remote_port]
-          > show
-          > exit
+          connect [local_port] -> [remote_ip] [remote_port]
+          accept [remote_ip] [remote_port]
+          show
+          irb (for debug)
+          exit!
         MESSAGE
       end
     end
