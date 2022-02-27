@@ -20,20 +20,25 @@ class ConnectionManager
       key = [ip, port]
       type_id = data.ord
       msg = data[1..]
+      existing_conn = @connections[key]
+      if existing_conn&.marked_for_accept
+        existing_conn.marked_for_accept = false
+        @accept_queue << existing_conn
+      end
       case Connection::TYPES[type_id]
       when :req
         find_or_accept_connection(ip, port)&.send_ack
       when :ack
         rid, ridx, sid, scnt = msg.unpack 'NNNN'
-        @connections[key].handle_ack rid, ridx, sid, scnt
+        existing_conn&.handle_ack rid, ridx, sid, scnt
       when :data
         connection_id, idx = msg.unpack 'NN'
-        @connections[key]&.handle_data connection_id, idx, msg[8..]
+        existing_conn&.handle_data connection_id, idx, msg[8..]
       when :resend
         connection_id, *idxs = msg.unpack 'N*'
-        @connections[key]&.handle_resend connection_id, idxs
+        existing_conn&.handle_resend connection_id, idxs
       when :close
-        @connections[key]&.handle_close
+        existing_conn&.handle_close
         @connections.delete key
       end
     end
@@ -70,10 +75,11 @@ class ConnectionManager
     @accept_queue.deq
   end
 
-  def connect(ip, port)
+  def connect(ip, port, mark_for_accept: false)
     conn = @connections[[ip, port]]
     unless conn
       conn = @connections[[ip, port]] = Connection.new self, ip, port
+      conn.marked_for_accept = mark_for_accept
       conn.send_req
     end
     conn
@@ -93,6 +99,8 @@ end
 
 class Connection
   TYPES = %i[req ack data resend close]
+
+  attr_accessor :marked_for_accept
 
   def initialize(manager, ip, port)
     @manager = manager

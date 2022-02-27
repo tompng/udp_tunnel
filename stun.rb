@@ -15,6 +15,12 @@ class Stun
     ['stun4.l.google.com', 19302]
   ]
 
+  class Error < StandardError; end
+
+  def self.get_ip_port(socket)
+    Stun.new(socket).get_ip_port
+  end
+
   def get_ip_port
     servers = ADDRS.sample 2
     results = servers.map do |host, port|
@@ -22,14 +28,13 @@ class Stun
     end
     if results.uniq.size != 1
       p servers.zip(results)
-      raise 'Symmetric NAT. unsupported'
+      raise Error, 'Unsupported Symmetric NAT'
     end
     results[0]
   end
 
-  def test(host, port, legacy = false)
+  def test(host, port)
     magic_cookie = 0x2112A442
-    magic_cookie = rand(0xffffffff) if legacy
     magic_cookie_transaction_id = [magic_cookie].pack('N') + SecureRandom.random_bytes(12)
     @socket.send [1, 0].pack('nn') + magic_cookie_transaction_id, 0, host, port
     data = Timeout.timeout 5 do
@@ -47,7 +52,7 @@ class Stun
     end
     # 1: MAPPED-ADDRESS, 2: XOR-MAPPED-ADDRESS
     value = attrs[1] || attrs[32]
-    return unless value
+    raise Error, 'Packet Parse Error' unless value
     xor = attrs[1] ? [0] : magic_cookie_transaction_id.unpack('N*')
     family, xport, *xip = value.unpack 'nnN*'
     port = xport ^ (xor[0] >> 16)
@@ -57,8 +62,10 @@ class Stun
       [ip.join('.'), port]
     when 2 # IPv6
       [ip.join(':'), port]
+    else
+      raise Error, 'Packet Parse Error'
     end
   rescue Timeout::Error
-    nil
+    raise Error, 'Timeout'
   end
 end
