@@ -54,9 +54,9 @@ class Runner
       id = @cnt += 1
       info = [socket.connection.ip, socket.connection.port]
       p [:accept, id, info]
-      tcpsocket = TCPSocket.new host, port.to_i
-      pipe_socket socket, tcpsocket
-      pipe_socket tcpsocket, socket, -> { p [:closed, id, info] }
+      tcp_socket = TCPSocket.new host, port.to_i
+      pipe_socket socket, tcp_socket
+      pipe_socket tcp_socket, socket, -> { p [:closed, id, info] }
     end
   end
 

@@ -16,11 +16,12 @@ class ConnectionManager
   def run_recv
     loop do
       data, addr = @socket.recvfrom 65536
+      next if data[0, 3] != Connection::SIGNATURE
       ip = addr[3]
       port = addr[1]
       key = [ip, port]
-      type_id = data.ord
-      msg = data[1..]
+      type_id = data[3].ord
+      msg = data[4..]
       existing_conn = @connections[key]
       if existing_conn&.marked_for_accept
         existing_conn.marked_for_accept = false
@@ -100,6 +101,7 @@ end
 
 class Connection
   TYPES = %i[req ack data resend close]
+  SIGNATURE = [0x35, 0x26, 0x41].pack 'C*'
 
   attr_accessor :marked_for_accept
   attr_reader :ip, :port
@@ -274,6 +276,6 @@ class Connection
   def socket_send(type, *data)
     sdata = data.flatten.map { _1.is_a?(Numeric) ? [_1].pack('N') : _1 }.join
     type_id = TYPES.index type
-    @manager.send_raw type_id.chr + sdata, @ip, @port
+    @manager.send_raw SIGNATURE + type_id.chr + sdata, @ip, @port
   end
 end
