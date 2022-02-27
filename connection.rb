@@ -193,6 +193,7 @@ class Connection
         send_req
       end
     elsif connected?
+      return handle_close if current - @last_recv_ack > 30
       send_ack if @last_send_ack.nil? || current - @last_send_ack > 5
       request_resend
     end
