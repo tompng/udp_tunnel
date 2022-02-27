@@ -49,15 +49,21 @@ class ConnectionManager
     conn
   end
 
+  attr_accessor :emulate_packet_loss, :emulate_packet_delay
+
   def send_raw(data, ip, port)
-    if rand < 0.05
-      p :lost
+    if emulate_packet_loss && rand < emulate_packet_loss
+      p :loss
       return
     end
-    Thread.new{
-      sleep rand(0.1)
+    if emulate_packet_delay
+      Thread.new do
+        sleep rand(emulate_packet_delay)
+        @socket.send data, 0, ip, port
+      end
+    else
       @socket.send data, 0, ip, port
-    }
+    end
   end
 
   def accept
@@ -140,13 +146,13 @@ class Connection
   end
 
   MAX_BODY_SIZE = 1024
-  MAX_PACKET_BUFFER = 64
+  MAX_PACKET_BUFFER = 128
 
   def send_data(message)
     @monitor.synchronize do
       @cond.wait_while { @send_buffer.size >= MAX_PACKET_BUFFER }
     end
-    message.chars.each_slice(MAX_BODY_SIZE - 9).map(&:join).map do |msg|
+    message.chars.each_slice(MAX_BODY_SIZE).map(&:join).map do |msg|
       idx = @send_idx + @send_buffer.size
       @send_buffer << msg
       socket_send :data, @send_connection_id, idx, msg

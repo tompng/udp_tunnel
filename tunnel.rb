@@ -2,8 +2,11 @@ require 'socket'
 require_relative 'connection'
 require_relative 'usocket'
 require_relative 'stun'
-socket = UDPSocket.open
-socket.bind '0.0.0.0', 0
+
+bind_addr = ARGV[1] || '0.0.0.0'
+socket = UDPSocket.open bind_addr.include?(':') ? Socket::AF_INET6 : Socket::AF_INET
+socket.bind bind_addr, 0
+
 # stun = Stun.new socket
 # global_ip, global_port = stun.get_ip_port
 # p [global_ip, global_port]
@@ -11,6 +14,9 @@ socket.bind '0.0.0.0', 0
 local_port = socket.addr[1]
 p local_port
 manager = ConnectionManager.new socket
+# manager.emulate_packet_loss = 0.1
+# manager.emulate_packet_delay = 0.2
+
 
 def pipe_socket(from, to)
   Thread.new do
