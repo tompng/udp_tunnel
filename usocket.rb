@@ -1,5 +1,7 @@
 require 'securerandom'
 class USocket
+  attr_reader :connection
+
   def initialize(connection, client, id)
     @client = client
     @connection = connection

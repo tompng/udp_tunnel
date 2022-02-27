@@ -1,6 +1,7 @@
 require 'monitor'
 
 class ConnectionManager
+  attr_accessor :on_connect, :on_close
   def initialize(socket, accept: true)
     @socket = socket
     @connections = {}
@@ -101,6 +102,7 @@ class Connection
   TYPES = %i[req ack data resend close]
 
   attr_accessor :marked_for_accept
+  attr_reader :ip, :port
 
   def initialize(manager, ip, port)
     @manager = manager
@@ -141,6 +143,7 @@ class Connection
   def handle_close
     return if closed?
     @status = :closed
+    @manager.on_close&.call self
     trigger :close
     @manager.remove @ip, @port
   end
@@ -205,6 +208,7 @@ class Connection
     if connecting?
       trigger :open
       @status = :connected
+      @manager.on_connect&.call self
     end
     return if send_id != @send_connection_id && reached_idx != 0
     return if recv_id == @terminated_recv_connection_id

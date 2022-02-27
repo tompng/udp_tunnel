@@ -25,9 +25,12 @@ class Runner
     # @manager.emulate_packet_loss = 0.1
     # @manager.emulate_packet_delay = 0.2
     @clients = {}
+    @cnt = 0
+    @manager.on_connect = -> connection { p [:udp_connected, connection.ip, connection.port] }
+    @manager.on_close = -> connection { p [:udp_closed, connection.ip, connection.port]}
   end
 
-  def pipe_socket(from, to)
+  def pipe_socket(from, to, onclose = nil)
     Thread.new do
       loop do
         data = from.readpartial 1024
@@ -39,6 +42,7 @@ class Runner
     ensure
       from.close rescue nil
       to.close rescue nil
+      onclose&.call
     end
   end
 
@@ -47,10 +51,12 @@ class Runner
     raise "port not specified: #{addr}" unless /^(?<host>.+):(?<port>\d+)$/ =~ addr
     loop do
       socket = server.accept
-      p :accepted
+      id = @cnt += 1
+      info = [socket.connection.ip, socket.connection.port]
+      p [:accept, id, info]
       tcpsocket = TCPSocket.new host, port.to_i
       pipe_socket socket, tcpsocket
-      pipe_socket tcpsocket, socket
+      pipe_socket tcpsocket, socket, -> { p [:closed, id, info] }
     end
   end
 
@@ -59,8 +65,11 @@ class Runner
     loop do
       tcp_socket = tcp_server.accept
       socket = client.connect
+      id = @cnt += 1
+      info = { from: tcp_server.addr[1], to: [ip, port] }
+      p [:connect, id, info]
       pipe_socket socket, tcp_socket
-      pipe_socket tcp_socket, socket
+      pipe_socket tcp_socket, socket, -> { p [:close, id, info] }
     end
   end
 
@@ -91,7 +100,7 @@ begin
     when /^connect/
       if /^connect +(?<local_port>\d+) +-> +(?<remote_ip>\S+) +(?<remote_port>\d+)/ =~ text
         tcp_server = TCPServer.new local_port.to_i
-        runner.run_client tcp_server, remote_ip, remote_port.to_i
+        Thread.new { runner.run_client tcp_server, remote_ip, remote_port.to_i }
       else
         puts <<~MESSAGE
           Invalid format. `connect [local_port] -> [remote_ip] [remote_port]`
